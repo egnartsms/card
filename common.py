@@ -96,6 +96,7 @@ class Strike:
 
 def filter_cards_by_values(cards, table_cards):
     """Filter cards: take only those whose values are also in table_cards
+
     :param cards: iterable of cards
     :param table_cards: iterable of cards
     :return: iterable of cards
@@ -138,8 +139,42 @@ def factorial(nom, denom):
     return p
 
 
+WAITCARD = 'waitcard'
+
 # Control codes
-PUT_CARD = 'put-card'
-READY_TO_BEAT = 'ready-to-beat'
-BEAT_WITH = 'beat-with'
-TAKE_UNBEATABLES = 'take-unbeatables'
+class CodesMetaclass(type):
+    def __new__(mcs, name, bases, namespace):
+        assert 'codes' in namespace
+        codes = namespace['codes']
+        for code in codes:
+            assert isinstance(code, str)
+            namespace[code] = code
+        del namespace['codes']
+        return super().__new__(mcs, name, bases, namespace)
+
+
+class ControlCode(metaclass=CodesMetaclass):
+    codes = (
+        'PUT_OFFCARD',
+        'GET_DEFCARD',
+        'PUT_DEFCARD'
+        'GET_OFFCARD',
+        'TAKE_UNBEATABLES',
+        'GET_MORE_CARDS',
+    )
+
+
+class GenHelper:
+    __slots__ = 'gen', 'currval'
+
+    def __init__(self, gen):
+        self.gen = gen
+        self.currval = self.gen.send(None)
+
+    def send(self, obj):
+        self.currval = self.gen.send(obj)
+        return self.currval
+
+    @property
+    def iswaiting(self):
+        return self.currval is None

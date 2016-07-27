@@ -7,11 +7,12 @@ The dumb player's strategy is like this:
     * put or not to put trump cards (varies).
 """
 
+from itertools import chain
 from random import choice
 
 import gcxt
-from common import card_value, beats, PUT_CARD, READY_TO_BEAT, BEAT_WITH,\
-    TAKE_UNBEATABLES
+from common import card_value, beats, filter_cards_by_values, \
+    NCARDS_PLAYER
 
 
 class DumbPlayer:
@@ -92,6 +93,8 @@ class DumbPlayer:
 
 
 def play(cards, myturn, options):
+    # Remember: we are not responsible to track EOG conditions here.  This is
+    # for the code that manages the game to handle.
     cards = set(cards)
 
     def choose_from(these):
@@ -108,36 +111,53 @@ def play(cards, myturn, options):
         cards.remove(card)
         return card
 
-    def attack():
-        pass
-
-    def defense(beatcard):
-        """Return whether i survived"""
+    def offense():
+        """Return True if the rival failed to beat our cards"""
         c_off, c_def = set(), set()
+        while cards:
+            if c_off:
+                offcard = choose_from(
+                    filter_cards_by_values(cards, chain(c_off, c_def))
+                )
+            else:
+                offcard = choose_from(cards)
+            if offcard is None:
+                break
+
+            yield offcard
+            defcard = yield
+            if defcard is not None:
+                c_def.add(defcard)
+            else:
+                return True
+
+        return False
+
+    def defense():
+        """Return True if we survived"""
+        c_off = set()
         while True:
-            c_off.add(beatcard)
-            suitable = frozenset(c for c in cards if beats(c, beatcard))
-            beatwith = choose_from(suitable)
-            if beatwith is not None:
-                c_def.add(beatwith)
-                beatcard = yield (BEAT_WITH, beatwith)
-                if beatcard is None:
-                    return True
+            offcard = yield
+            if offcard is None:
+                break
+
+            assert cards, "Logic error"
+
+            c_off.add(offcard)
+            suitable = frozenset(c for c in cards if beats(c, offcard))
+            defcard = choose_from(suitable)
+            if defcard is not None:
+                yield defcard
             else:
                 # i cannot beat the beatcard
-                unbeatables = yield (TAKE_UNBEATABLES,)
+                unbeatables = yield
                 c_off |= unbeatables
                 cards.update(unbeatables)
                 return False
-
-
-
-
+        return True
 
     while True:
-        if myturn:
-            yield from attack()
-        else:
-            yield from defense((yield READY_TO_BEAT))
-
-
+        assert cards, "Logic error"
+        myturn = (yield from offense()) if myturn else (yield from defense())
+        if len(cards) < NCARDS_PLAYER:
+            cards.update((yield))
