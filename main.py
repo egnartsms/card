@@ -1,11 +1,10 @@
 from argparse import ArgumentParser
 from functools import partial
-from concurrent.futures import ProcessPoolExecutor, wait
 from random import seed
 
 import gcxt
+from dumb import Player as DumbPlayer
 from game import rungame
-from dumb import play as play_dumb
 #from smart1 import SmartPlayer
 from common import Card
 
@@ -41,10 +40,10 @@ def main():
     # return
     seed(212)
     res = rungame(
-        partial(play_dumb, options={'put-more-trumps': True,
-                                    'choose-card': 'min'}),
-        partial(play_dumb, options={'put-more-trumps': True,
-                                    'choose-card': 'min'})
+        partial(DumbPlayer, options={'put-more-trumps': True,
+                                     'choose-card': 'min'}),
+        partial(DumbPlayer, options={'put-more-trumps': True,
+                                     'choose-card': 'min'})
     )
     print(res)
     return

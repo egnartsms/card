@@ -139,6 +139,9 @@ def factorial(nom, denom):
     return p
 
 
+novalue = object()
+
+
 WAITCARD = 'waitcard'
 
 # Control codes
