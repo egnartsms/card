@@ -1,6 +1,7 @@
+import os
 from argparse import ArgumentParser
 from functools import partial
-from random import seed
+from concurrent.futures import ProcessPoolExecutor
 
 import gcxt
 from dumb import Player as DumbPlayer
@@ -9,16 +10,26 @@ from game import rungame
 from common import Card
 
 
-# def launch(N):
-#     with ProcessPoolExecutor(4) as exe:
-#         futures = [exe.submit(launch_1_game) for i in range(N)]
-#         wait(futures)
-#         results = [f.result() for f in futures]
-#         w1 = sum(1 for r in results if r is True)
-#         w2 = sum(1 for r in results if r is False)
-#         d = sum(1 for r in results if r is None)
-#
-#     print("Results: ", w1, d, w2)
+def launch_parallel(N):
+    with ProcessPoolExecutor() as exe:
+        M = N
+        chunk = N // os.cpu_count()
+        futures = []
+        while M > 0:
+            futures.append(exe.submit(launch_n_tasks, chunk))
+            M -= chunk
+
+    results = [x for f in futures for x in f.result()]
+    print('total futures', len(futures))
+    w1 = sum(1 for r in results if r is True)
+    w2 = sum(1 for r in results if r is False)
+    d = sum(1 for r in results if r is None)
+
+    print("Results: ", w1, d, w2)
+
+
+def launch_n_tasks(N):
+    return [launch_1_game() for i in range(N)]
 
 
 def launch_in_1_process(N):
@@ -26,7 +37,7 @@ def launch_in_1_process(N):
 
     for i in range(N):
         results.append(launch_1_game())
-        if i % 100 == 0:
+        if i % 1000 == 0:
             print(i, 'processed')
 
     w1 = sum(1 for r in results if r is True)
@@ -49,6 +60,7 @@ def main():
     parser.add_argument('N', type=int)
     args = parser.parse_args()
     launch_in_1_process(args.N)
+    #launch_parallel(args.N)
 
 
 def example():
