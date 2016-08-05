@@ -142,8 +142,6 @@ def factorial(nom, denom):
 novalue = object()
 
 
-WAITCARD = 'waitcard'
-
 # Control codes
 class CodesMetaclass(type):
     def __new__(mcs, name, bases, namespace):
@@ -156,40 +154,13 @@ class CodesMetaclass(type):
         return super().__new__(mcs, name, bases, namespace)
 
 
-class ControlCode(metaclass=CodesMetaclass):
+class RequestCode(metaclass=CodesMetaclass):
     codes = (
-        'PUT_OFFCARD',
-        'GET_DEFCARD',
-        'PUT_DEFCARD'
-        'GET_OFFCARD',
-        'TAKE_UNBEATABLES',
-        'GET_MORE_CARDS',
+        'DEFCARD',
+        'OFFCARD',
+        'NUM_UNBEATABLES',
+        'UNBEATABLES',
+        'REPLENISHMENT',
+        'NUM_RIVAL_REPLENISHMENT',
+        'GAME_OVER',
     )
-
-
-class GenHelper:
-    """Two-way communication with a generator object.
-
-    When a generator object yields None, it means that it requests some data
-    (depending on context): it waits for something to be sent in.  When a
-    generator yields non-None value, it gives it to us, and we immediately
-    advance it further by sending None to it.
-
-    It is impossible that a generator yields non-None 2 times in succession,
-    but it is possible for the generator to request some data more than 1
-    time in succession.
-    """
-    __slots__ = 'gen', 'currval'
-
-    def __init__(self, gen):
-        self.gen = gen
-        self.currval = self.gen.send(None)
-
-    def send(self, value):
-        self.currval = self.gen.send(value)
-        return self.currval
-
-    @property
-    def iswaiting(self):
-        return self.currval is None
-

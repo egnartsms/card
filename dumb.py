@@ -10,32 +10,35 @@ The dumb player's strategy is like this:
 from itertools import chain
 from random import choice
 
-
-from common import card_value, beats, filter_cards_by_values, \
-    NCARDS_PLAYER, novalue
+from util import to_frozenset
+from common import card_value, beats, filter_cards_by_values, novalue, RequestCode as rc
 
 
 class Player:
-    __slots__ = 'value', 'gen'
+    __slots__ = 'value', 'request_code', 'gen'
 
     def __init__(self, *args, **kwargs):
-        self.value = None
+        self.value = self.request_code = novalue
         self.gen = self._scenario(*args, **kwargs)
         self.send(None)
 
-    def send(self, value):
+    def send(self, value, request_code_must_be=None):
+        if request_code_must_be is not None:
+            assert self.request_code == request_code_must_be, "Logic error"
+
+        # Previously generated value is reset.  The generator will assign a new value
+        # in the course of its work.
         self.value = novalue
-        self.gen.send(value)
+        self.request_code = self.gen.send(value)
 
     def _scenario(self, cards, myturn, options):
         # Remember: we are not responsible to track EOG conditions here. This
         # is for the code that manages the game to handle.
         cards = set(cards)
+        nrival_cards = len(cards)
 
         def choose_from(these):
-            if not isinstance(these, (set, frozenset)):
-                these = frozenset(these)
-
+            these = to_frozenset(these)
             if not these:
                 return None
 
@@ -50,9 +53,11 @@ class Player:
             return card
 
         def offense():
-            """Return True if the rival failed to beat our cards"""
+            """Return True if we made the rival give up"""
+            nonlocal nrival_cards
+
             toff, tdef = set(), set()
-            while True:
+            while nrival_cards > 0 and cards:
                 if toff:
                     offcard = choose_from(
                         filter_cards_by_values(cards, chain(toff, tdef))
@@ -65,51 +70,59 @@ class Player:
 
                 toff.add(offcard)
 
-                defcard = yield
+                defcard = yield rc.DEFCARD
                 if defcard is not None:
                     tdef.add(defcard)
+                    nrival_cards -= 1
                 else:
-                    nput = yield
-                    put_unbeatables(nput, chain(toff, tdef))
+                    unbeatables = choose_unbeatables(nrival_cards - 1, chain(toff, tdef))
+                    cards.difference_update(unbeatables)
+                    nrival_cards += len(unbeatables) + len(toff) + len(tdef)
+                    self.value = unbeatables
                     return True
 
             return False
 
-        def put_unbeatables(n, table_cards):
+        def choose_unbeatables(n, table_cards):
+            nonlocal nrival_cards, cards
             unbeatables = sorted(filter_cards_by_values(cards, table_cards),
                                  key=card_value)
             del unbeatables[min(n, len(unbeatables)):]
-            cards.difference_update(unbeatables)
-            self.value = frozenset(unbeatables)
+            return frozenset(unbeatables)
 
         def defense():
             """Return True if we survived"""
+            nonlocal nrival_cards
+
             toff, tdef = set(), set()
-            while True:
-                offcard = yield
+            while nrival_cards > 0 and cards:
+                offcard = yield rc.OFFCARD
                 if offcard is None:
                     break
 
-                assert cards, "Logic error"
+                nrival_cards -= 1
                 toff.add(offcard)
 
+                assert cards, "Logic error"
                 suitable = frozenset(c for c in cards if beats(c, offcard))
                 defcard = choose_from(suitable)
                 self.value = defcard
                 if defcard is None:
                     # i cannot beat the beatcard
-                    unbeatables = yield
+                    unbeatables = yield rc.UNBEATABLES
                     assert len(unbeatables) < len(cards)
                     toff |= unbeatables
                     cards.update(toff, tdef)
+                    nrival_cards -= len(unbeatables)
                     break
 
                 tdef.add(defcard)
 
             return len(toff) == len(tdef)
 
-        while True:
-            assert cards, "Logic error"
+        while cards and nrival_cards > 0:
             myturn = (yield from offense()) if myturn else (yield from defense())
-            if len(cards) < NCARDS_PLAYER:
-                cards.update((yield))
+            cards.update((yield rc.REPLENISHMENT))
+            nrival_cards += yield rc.NUM_RIVAL_REPLENISHMENT
+
+        yield rc.GAME_OVER

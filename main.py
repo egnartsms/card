@@ -21,33 +21,30 @@ from common import Card
 #     print("Results: ", w1, d, w2)
 
 
-# def launch_in_1_process(N):
-#     results = [launch_1_game() for i in range(N)]
-#     w1 = sum(1 for r in results if r is True)
-#     w2 = sum(1 for r in results if r is False)
-#     d = sum(1 for r in results if r is None)
-#     print("Results: ", w1, d, w2)
+def launch_in_1_process(N):
+    results = []
+
+    for i in range(N):
+        results.append(launch_1_game())
+        if i % 100 == 0:
+            print(i, 'processed')
+
+    w1 = sum(1 for r in results if r is True)
+    w2 = sum(1 for r in results if r is False)
+    d = sum(1 for r in results if r is None)
+    print("Results: ", w1, d, w2)
 
 
-# def launch_1_game():
-#     return play(partial(DumbPlayer, {'put-more-trumps': True,
-#                                      'choose-card': 'min'}),
-#                 partial(SmartPlayer))
-
-
-def main():
-    # launch_1_game()
-    # return
-    seed(212)
-    res = rungame(
+def launch_1_game():
+    return rungame(
         partial(DumbPlayer, options={'put-more-trumps': True,
                                      'choose-card': 'min'}),
         partial(DumbPlayer, options={'put-more-trumps': True,
                                      'choose-card': 'min'})
     )
-    print(res)
-    return
 
+
+def main():
     parser = ArgumentParser()
     parser.add_argument('N', type=int)
     args = parser.parse_args()
