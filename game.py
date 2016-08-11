@@ -1,9 +1,10 @@
 import gcxt
-from common import beats, random_deck, random_suit, NCARDS_PLAYER, RequestCode as rc
+from common import beats, random_deck, random_suit, NCARDS_PLAYER, RequestCode as rc,\
+    Player
 
 
-def rungame(creator1, creator2):
-    poff, coff, pdef, cdef, deck = start_game(creator1, creator2)
+def rungame(scenario1, scenario2):
+    poff, coff, pdef, cdef, deck = start_game(scenario1, scenario2)
     coff = set(coff)
     cdef = set(cdef)
     swapped = False
@@ -76,16 +77,13 @@ def rungame(creator1, creator2):
             swapped = not swapped
 
 
-def start_game(creator1, creator2):
+def start_game(scenario1, scenario2):
     """Return (p1, cards1, p2, cards2, deck)"""
     deck = random_deck()
     gcxt.trump = random_suit()
     cards1 = deck[:NCARDS_PLAYER]
-    p1 = creator1(frozenset(cards1), True)
+    p1 = Player(scenario1, frozenset(cards1), True)
     cards2 = deck[NCARDS_PLAYER:NCARDS_PLAYER * 2]
-    p2 = creator2(frozenset(cards2), False)
+    p2 = Player(scenario2, frozenset(cards2), False)
     del deck[:NCARDS_PLAYER * 2]
     return p1, cards1, p2, cards2, deck
-
-
-

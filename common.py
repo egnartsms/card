@@ -164,3 +164,25 @@ class RequestCode(metaclass=CodesMetaclass):
         'NUM_RIVAL_REPLENISHMENT',
         'GAME_OVER',
     )
+
+
+# Wrapper for player algorithms
+class Player:
+    __slots__ = 'value', 'request_code', 'gen'
+
+    def __init__(self, genfunc, mycards, myturn):
+        def value_sender(val):
+            self.value = val
+
+        self.value = self.request_code = novalue
+        self.gen = genfunc(value_sender, mycards, myturn)
+        self.send(None)
+
+    def send(self, value, request_code_must_be=None):
+        if request_code_must_be is not None:
+            assert self.request_code == request_code_must_be, "Logic error"
+
+        # Previously generated value is reset.  The generator will assign a new value
+        # in the course of its work.
+        self.value = novalue
+        self.request_code = self.gen.send(value)

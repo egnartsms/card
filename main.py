@@ -4,10 +4,8 @@ from functools import partial
 from concurrent.futures import ProcessPoolExecutor
 
 import gcxt
-from dumb import Player as DumbPlayer
+from dumb import scenario as dumb_scenario
 from game import rungame
-#from smart1 import SmartPlayer
-from common import Card
 
 
 def launch_parallel(N):
@@ -48,10 +46,10 @@ def launch_in_1_process(N):
 
 def launch_1_game():
     return rungame(
-        partial(DumbPlayer, options={'put-more-trumps': True,
-                                     'choose-card': 'min'}),
-        partial(DumbPlayer, options={'put-more-trumps': True,
-                                     'choose-card': 'min'})
+        partial(dumb_scenario, options={'put-more-trumps': True,
+                                        'choose-card': 'min'}),
+        partial(dumb_scenario, options={'put-more-trumps': True,
+                                        'choose-card': 'min'})
     )
 
 
@@ -64,17 +62,20 @@ def main():
 
 
 def example():
-    from decision_tree import build_tree, vis_tree_structure
+    from common import random_deck, random_suit, NCARDS_PLAYER
+    from decision_tree import build_tree, tree_count
 
-    gcxt.trump = 'spades'
-    tree = build_tree(
-        frozenset([Card('spades', 9), Card('diamonds', 7), Card('hearts', 12)]),
-        frozenset([Card('diamonds', 10), Card('clubs', 13), Card('hearts', 8)]),
-        True,
-    )
-    vis = vis_tree_structure(tree)
-    print(tree.estimate)
+    for i in range(10):
+        gcxt.trump = random_suit()
+        deck = random_deck()
+        node = build_tree(
+            deck[:NCARDS_PLAYER],
+            deck[NCARDS_PLAYER:2 * NCARDS_PLAYER],
+            True,
+        )
+        print(tree_count(node))
 
 
 if __name__ == '__main__':
-    main()
+    #main()
+    example()

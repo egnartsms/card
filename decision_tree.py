@@ -5,7 +5,7 @@ from common import beats, filter_cards_by_values, card_value
 from util import recordtype
 
 
-MAXDEPTH = 2
+MAXDEPTH = 3
 
 
 Node = recordtype('Node', (
@@ -13,6 +13,8 @@ Node = recordtype('Node', (
     'defense_cards',
     'myturn',
     'internode',
+    'internode_count',
+    'subnodes'
 ))
 
 
@@ -38,10 +40,7 @@ def make_internode(moves, myturn):
     """Make a new internode and compute its estimate and best move"""
     subestimates = tuple((move, node_estimate(subnode))
                          for move, subnode in moves.items())
-    bestmove, est = (max if myturn else min)(
-        subestimates,
-        key=operator.itemgetter(1)
-    )
+    bestmove, est = (max if myturn else min)(subestimates, key=operator.itemgetter(1))
 
     return Internode(
         moves=moves,
@@ -159,12 +158,16 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
         p1, p2 = cardset_relation(offense_cards, defense_cards)
         return p1 if myturn else p2
 
+    principal_internode = offensive(offense_cards, defense_cards,
+                                    frozenset(), frozenset())
+
     return Node(
         offense_cards=offense_cards,
         defense_cards=defense_cards,
         myturn=myturn,
-        internode=offensive(offense_cards, defense_cards,
-                            frozenset(), frozenset()),
+        internode=principal_internode,
+        internode_count=len(internodes),
+        subnodes=tuple(subnodes.values()),
     )
 
 
@@ -210,10 +213,10 @@ def cardset_relation(cards1, cards2):
         met1 += justmet1
         met2 += justmet2
 
-    assert p1 + p2 == sum(1 for v, x12 in cards if x12 == 1) *\
-        sum(1 for v, x12 in cards if x12 == 2)
-
-    return p1 / (p1 + p2), p2 / (p1 + p2)
+    if p1 + p2 == 0:
+        return 0.5, 0.5
+    else:
+        return p1 / (p1 + p2), p2 / (p1 + p2)
 
 
 def vis_tree_structure(tree):
@@ -273,21 +276,11 @@ def vis_tree_structure(tree):
 
 
 def tree_height(node):
-    if not isinstance(node, Node):
-        return 0
-
-    subheights = [tree_height(subnode) for subnode in node.moves.values()]
-    assert subheights
-
-    start_of_strike = 0
-    if node.beatcard is None and node.strike.beginning:
-        start_of_strike = 1
-
-    return start_of_strike + max(subheights)
+    raise NotImplementedError
 
 
 def tree_count(node):
-    if not isinstance(node, Node):
-        return 1
+    if isinstance(node, Node):
+        return 1 + node.internode_count + sum(tree_count(x) for x in node.subnodes)
     else:
-        return 1 + sum(tree_count(sn) for sn in node.moves.values())
+        return 1
