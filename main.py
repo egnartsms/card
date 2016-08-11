@@ -77,5 +77,5 @@ def example():
 
 
 if __name__ == '__main__':
-    #main()
-    example()
+    main()
+    #example()
