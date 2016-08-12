@@ -8,30 +8,24 @@ The dumb player's strategy is like this:
 """
 
 from itertools import chain
+
 from random import choice
 
-from util import to_frozenset
 from common import card_value, beats, filter_cards_by_values, RequestCode as rc
 
 
-def scenario(send, cards, myturn, options):
+def scenario(send, cards, myturn):
     # Remember: we are not responsible to track EOG conditions here. This
     # is for the code that manages the game to handle.
     cards = set(cards)
     nrival_cards = len(cards)
 
     def choose_from(these):
-        these = to_frozenset(these)
+        these = frozenset(these)
         if not these:
             return None
 
-        if options['choose-card'] == 'min':
-            card = min(these, key=card_value)
-        elif options['choose-card'] == 'random':
-            card = choice(list(these))
-        else:
-            raise RuntimeError("Invalid value for 'choose-card' option")
-
+        card = min(these, key=card_value)
         cards.remove(card)
         return card
 
@@ -67,7 +61,6 @@ def scenario(send, cards, myturn, options):
         return False
 
     def choose_unbeatables(n, table_cards):
-        nonlocal nrival_cards, cards
         unbeatables = sorted(filter_cards_by_values(cards, table_cards),
                              key=card_value)
         del unbeatables[min(n, len(unbeatables)):]

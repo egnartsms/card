@@ -5,6 +5,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import gcxt
 from dumb import scenario as dumb_scenario
+from smart import scenario as smart_scenario
 from game import rungame
 
 
@@ -46,10 +47,9 @@ def launch_in_1_process(N):
 
 def launch_1_game():
     return rungame(
-        partial(dumb_scenario, options={'put-more-trumps': True,
-                                        'choose-card': 'min'}),
-        partial(dumb_scenario, options={'put-more-trumps': True,
-                                        'choose-card': 'min'})
+        #dumb_scenario,
+        partial(smart_scenario, consider_trumps=True),
+        partial(smart_scenario, consider_trumps=True),
     )
 
 

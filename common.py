@@ -52,49 +52,7 @@ def card_value(card, trump=None):
         return NUM_CARDS_PER_SUIT * (len(SUITS) - 1) + (v - MIN_CARD_VALUE)
 
 
-class Strike:
-    """Represents a move from one player to another"""
-    def __init__(self, offensive=None, defensive=None):
-        self.offensive = offensive or set()
-        self.defensive = defensive or set()
-
-    def add_offensive(self, card):
-        self.offensive.add(card)
-
-    def add_defensive(self, card):
-        self.defensive.add(card)
-
-    def add_offensives(self, cards):
-        self.offensive.update(cards)
-
-    def new_offensive_card(self, card):
-        return Strike(self.offensive | {card}, self.defensive)
-
-    def new_defensive_card(self, card):
-        return Strike(self.offensive, self.defensive | {card})
-
-    @property
-    def beginning(self):
-        return not self.offensive and not self.defensive
-
-    @property
-    def all_cards(self):
-        return frozenset(self.offensive) | self.defensive
-
-    @property
-    def card_values(self):
-        return frozenset(c.value for c in self.all_cards)
-
-    def filter(self, cards):
-        """Select those cards whose values are already on the table
-        
-        :return: iterable
-        """
-        cv = self.card_values
-        return filter(lambda c: c.value in cv, cards)
-
-
-def filter_cards_by_values(cards, table_cards):
+def filter_cards_by_values(cards, table_cards, consider_trumps=False):
     """Filter cards: take only those whose values are also in table_cards
 
     :param cards: iterable of cards
@@ -102,7 +60,11 @@ def filter_cards_by_values(cards, table_cards):
     :return: iterable of cards
     """
     values = frozenset(map(attrgetter('value'), table_cards))
-    return filter(lambda c: c.value in values, cards)
+
+    def cond(c):
+        return (consider_trumps or c.suit != gcxt.trump) and c.value in values
+
+    return filter(cond, cards)
 
 
 def random_suit():
