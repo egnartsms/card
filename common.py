@@ -1,3 +1,4 @@
+from statistics import mean
 from collections import Counter, namedtuple
 from operator import attrgetter
 from random import choice, shuffle
@@ -40,7 +41,7 @@ def beats(c1, c2, trump=None):
 
 
 def card_value(card, trump=None):
-    """How many cards can beat this one"""
+    """How many cards can this one beat"""
     if trump is None:
         trump = gcxt.trump
     assert trump is not None
@@ -52,19 +53,26 @@ def card_value(card, trump=None):
         return NUM_CARDS_PER_SUIT * (len(SUITS) - 1) + (v - MIN_CARD_VALUE)
 
 
-def filter_cards_by_values(cards, table_cards, consider_trumps=False):
-    """Filter cards: take only those whose values are also in table_cards
+def values_of(cards):
+    return frozenset(map(card_value, cards))
+
+
+def matching_by_value(cards, cardvalues, exclude_trumps=False):
+    """Filter cards: take only those whose values are in cardvalues
 
     :param cards: iterable of cards
-    :param table_cards: iterable of cards
-    :return: iterable of cards
+    :param cardvalues: set of card values
+    :param consider_trumps: if False, exclude trumps from result
+    :return: frozenset of cards
     """
-    values = frozenset(map(attrgetter('value'), table_cards))
-
     def cond(c):
-        return (consider_trumps or c.suit != gcxt.trump) and c.value in values
+        return (not exclude_trumps or c.suit != gcxt.trump) and c.value in cardvalues
 
-    return filter(cond, cards)
+    return frozenset(filter(cond, cards))
+
+
+def mean_cardvalue(cards):
+    return mean(map(card_value, cards))
 
 
 def random_suit():

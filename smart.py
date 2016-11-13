@@ -1,15 +1,14 @@
-from itertools import chain
+from itertools import chain, takewhile
 
-from common import card_value, beats, filter_cards_by_values, RequestCode as rc,\
-    NCARDS_PLAYER, deckset
+from common import card_value, beats, matching_by_value, RequestCode as rc,\
+    NCARDS_PLAYER, deckset, values_of, mean_cardvalue
 
 
-def scenario(send, cards, myturn, consider_trumps):
+def scenario(send, cards, myturn):
     cards = set(cards)
     rival_num_unknowns = NCARDS_PLAYER
     blackset = set(deckset) - cards
     rival_knowns = set()
-    junk = set()
 
     def rival_num():
         return rival_num_unknowns + len(rival_knowns)
@@ -18,7 +17,6 @@ def scenario(send, cards, myturn, consider_trumps):
         return not cards or rival_num() == 0
 
     def draw_from(these):
-        these = frozenset(these)
         if not these:
             return None
 
@@ -27,19 +25,29 @@ def scenario(send, cards, myturn, consider_trumps):
         return card
 
     def offense():
-        nonlocal rival_num_unknowns, rival_knowns, cards, junk
+        nonlocal rival_num_unknowns, rival_knowns, cards
         toff, tdef = set(), set()
         while not is_eog():
-            if toff:
-                offcard = draw_from(
-                    filter_cards_by_values(cards, chain(toff, tdef), consider_trumps)
-                )
-            else:
+            if not toff:
                 offcard = draw_from(cards)
+            else:
+                suitable = matching_by_value(cards, values_of(chain(toff, tdef)))
+                if not blackset:
+                    offcard = draw_from(suitable)
+                elif not suitable:
+                    offcard = None
+                else:
+                    weakest = min(suitable, key=card_value)
+                    Mb = mean_cardvalue(blackset)
+                    if card_value(weakest) <= Mb:
+                        cards.remove(weakest)
+                        offcard = weakest
+                    else:
+                        offcard = None
+
             send(offcard)
             if offcard is None:
                 break
-
             toff.add(offcard)
 
             defcard = yield rc.DEFCARD
@@ -59,19 +67,22 @@ def scenario(send, cards, myturn, consider_trumps):
                 send(unbeatables)
                 return True
 
-        junk |= toff | tdef
-
         return False
 
-    def choose_unbeatables(n, table_cards):
-        unbeatables = sorted(filter_cards_by_values(cards, table_cards, consider_trumps),
+    def choose_unbeatables(n, cardvalues):
+        unbeatables = sorted(matching_by_value(cards, cardvalues),
                              key=card_value)
         del unbeatables[min(n, len(unbeatables)):]
-        return frozenset(unbeatables)
+
+        if not blackset:
+            return frozenset(unbeatables)
+        else:
+            Mb = mean_cardvalue(blackset)
+            return frozenset(takewhile(lambda x: card_value(x) <= Mb, unbeatables))
 
     def defense():
         """Return True if we survived"""
-        nonlocal rival_num_unknowns, rival_knowns, cards, blackset, junk
+        nonlocal rival_num_unknowns, rival_knowns, cards, blackset
 
         toff, tdef = set(), set()
         while not is_eog():
@@ -89,9 +100,25 @@ def scenario(send, cards, myturn, consider_trumps):
 
             assert cards, "Logic error"
             suitable = frozenset(c for c in cards if beats(c, offcard))
-            defcard = draw_from(suitable)
+            if not suitable:
+                defcard = None
+            else:
+                defcard = min(suitable, key=card_value)
+                if blackset:
+                    # Here we can decide to give up
+                    Mgiveup = mean_cardvalue(chain(toff, tdef, cards))
+                    n_old = len(cards) - 1
+                    n_new = max(0, NCARDS_PLAYER - n_old)
+                    Mb = mean_cardvalue(blackset)
+                    Mbeat = (sum(card_value(c) for c in cards - {defcard}) + Mb * n_new)\
+                        / (n_old + n_new)
+                    if Mgiveup > Mbeat:
+                        defcard = None
+
             send(defcard)
-            if defcard is None:
+            if defcard is not None:
+                cards.remove(defcard)
+            else:
                 # i cannot beat the beatcard
                 unbeatables = yield rc.UNBEATABLES
                 assert len(unbeatables) < len(cards)
@@ -104,9 +131,6 @@ def scenario(send, cards, myturn, consider_trumps):
 
             tdef.add(defcard)
 
-        if len(toff) == len(tdef):
-            junk |= toff | tdef
-
         return len(toff) == len(tdef)
 
     while not is_eog():
@@ -116,5 +140,10 @@ def scenario(send, cards, myturn, consider_trumps):
         blackset -= my_replenishment
         cards |= my_replenishment
         rival_num_unknowns += yield rc.NUM_RIVAL_REPLENISHMENT
+        if rival_num_unknowns == len(blackset):
+            rival_num_unknowns = 0
+            assert not rival_knowns & blackset
+            rival_knowns |= blackset
+            blackset.clear()
 
     yield rc.GAME_OVER

@@ -1,7 +1,7 @@
 import operator
 from itertools import combinations, chain, groupby
 
-from common import beats, filter_cards_by_values, card_value
+from common import beats, matching_by_value, values_of, card_value
 from util import recordtype
 
 
@@ -82,7 +82,7 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
             return res
 
         if t_off:
-            cards = filter_cards_by_values(c_off, chain(t_off, t_def))
+            cards = matching_by_value(c_off, values_of(chain(t_off, t_def)))
         else:
             cards = c_off
         moves = {
@@ -119,8 +119,7 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
         if (t_off, t_def) in internodes:
             return internodes[t_off, t_def]
 
-        more_cards = frozenset(filter_cards_by_values(c_off,
-                                                      chain(t_off, t_def)))
+        more_cards = matching_by_value(c_off, chain(t_off, t_def))
         n = min(len(c_def) - 1, len(more_cards))
         moves = {
             frozenset(cards): lookup_subnode(t_off.union(cards), t_def)

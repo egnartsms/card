@@ -9,9 +9,7 @@ The dumb player's strategy is like this:
 
 from itertools import chain
 
-from random import choice
-
-from common import card_value, beats, filter_cards_by_values, RequestCode as rc
+from common import card_value, beats, matching_by_value, RequestCode as rc, values_of
 
 
 def scenario(send, cards, myturn):
@@ -37,7 +35,7 @@ def scenario(send, cards, myturn):
         while nrival_cards > 0 and cards:
             if toff:
                 offcard = choose_from(
-                    filter_cards_by_values(cards, chain(toff, tdef))
+                    matching_by_value(cards, values_of(chain(toff, tdef)))
                 )
             else:
                 offcard = choose_from(cards)
@@ -52,7 +50,8 @@ def scenario(send, cards, myturn):
                 tdef.add(defcard)
                 nrival_cards -= 1
             else:
-                unbeatables = choose_unbeatables(nrival_cards - 1, chain(toff, tdef))
+                unbeatables = choose_unbeatables(nrival_cards - 1,
+                                                 values_of(chain(toff, tdef)))
                 cards.difference_update(unbeatables)
                 nrival_cards += len(unbeatables) + len(toff) + len(tdef)
                 send(unbeatables)
@@ -60,8 +59,8 @@ def scenario(send, cards, myturn):
 
         return False
 
-    def choose_unbeatables(n, table_cards):
-        unbeatables = sorted(filter_cards_by_values(cards, table_cards),
+    def choose_unbeatables(n, cardvalues):
+        unbeatables = sorted(matching_by_value(cards, cardvalues, exclude_trumps=True),
                              key=card_value)
         del unbeatables[min(n, len(unbeatables)):]
         return frozenset(unbeatables)
