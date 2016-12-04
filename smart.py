@@ -147,10 +147,7 @@ def scenario(send, cards, iattack, when_open_game=None):
             blackset.clear()
             # From this moment on, it is possible to give control to another algorithm
             if when_open_game:
-                if iattack:
-                    yield from when_open_game(send, cards, rival_knowns, True)
-                else:
-                    yield from when_open_game(send, rival_knowns, cards, False)
+                yield from when_open_game(send, cards, rival_knowns, iattack)
                 break
 
     yield rc.GAME_OVER

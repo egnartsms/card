@@ -1,62 +1,9 @@
-import operator
+from operator import itemgetter
 from itertools import combinations, chain, groupby
+from contextlib import wraps
+from functools import partial
 
-from recordclass import recordclass
-
-from common import beats, matching_by_value, values_of, card_value
-
-
-Node = recordclass('Node', (
-    'offense_cards',
-    'defense_cards',
-    'iattack',
-    # HACK: for leaf nodes, we store estimate here, not internode.  When deepen,
-    # this field is assigned a real internode.
-    'internode',
-))
-
-Internode = recordclass('Internode', (
-    'moves',
-    'myturn',
-    'estimate',
-    'bestmove',
-))
-
-
-def is_leaf_node(node):
-    return isinstance(node.internode, float)
-
-
-def node_estimate(obj):
-    if isinstance(obj, float):
-        return obj
-    if isinstance(obj, Node):
-        return node_estimate(obj.internode)
-    if isinstance(obj, Internode):
-        return obj.estimate
-    assert 0, "Invalid node object to estimate"
-
-
-def make_internode(moves, myturn):
-    """Make a new internode and compute its estimate and best move"""
-    bestmove, est = internode_estimate(moves, myturn)
-    return Internode(
-        moves=moves,
-        myturn=myturn,
-        estimate=est,
-        bestmove=bestmove
-    )
-
-
-def internode_estimate(moves, myturn):
-    """Compute internode's estimate based on its children's estimates.
-
-    So for this to work, the children's estimates must already have been computed.
-    :return: (bestmove, estimate)
-    """
-    subestimates = tuple((move, node_estimate(subnode))
-                         for move, subnode in moves.items())
-    return (max if myturn else min)(subestimates, key=operator.itemgetter(1))
+from common import beats, matching_by_value, values_of, card_value, unbeatables
 
 
 def check_eog(c_off, c_def, iattack):
@@ -72,132 +19,131 @@ def check_eog(c_off, c_def, iattack):
         return 0.0 if iattack else 1.0
 
 
-def build_decision_tree(offense_cards, defense_cards, iattack, levels):
-    res = check_eog(offense_cards, defense_cards, iattack)
-    if res is not None:
-        return res
-
-    if levels == 0:
-        # Estimate my cards vs rival's cards
-        p1, p2 = cardset_relation(offense_cards, defense_cards)
-        return Node(
-            offense_cards=offense_cards,
-            defense_cards=defense_cards,
-            iattack=iattack,
-            internode=p1 if iattack else p2
-        )
-
-    return Node(
-        offense_cards=offense_cards,
-        defense_cards=defense_cards,
-        iattack=iattack,
-        internode=principal_internode(offense_cards, defense_cards, iattack, levels)
-    )
+def cache_results_in(mapping):
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(c_off, c_def, t_off, t_def, *rest):
+            if (t_off, t_def) in mapping:
+                return mapping[t_off, t_def]
+            result = fn(c_off, c_def, t_off, t_def, *rest)
+            assert isinstance(result, tuple) and len(result) == 2
+            mapping[t_off, t_def] = result
+            return result
+        return wrapper
+    return decorator
 
 
-def principal_internode(offense_cards, defense_cards, iattack, levels):
+def make_decision(levels, fn):
     # Terminology:
     #   c_off, c_def - cards of offensive and defensive players that
     # they have on the hands;
     #   t_off, t_def - cards on the table (already put).
-    # Nodes within this strike: {(t_off, t_def): Internode}
-    internodes = {}
 
-    def offensive(c_off, c_def, t_off, t_def):
-        if (t_off, t_def) in internodes:
-            return internodes[t_off, t_def]
+    outcomes = {}  # (toff, tdef) -> (estimate, bestmove)
+    nextlevel = partial(make_offense_decision, levels - 1)
 
-        res = check_eog(c_off, c_def, iattack)
+    @cache_results_in(outcomes)
+    def i_attack(c_off, c_def, t_off, t_def):
+        res = check_eog(c_off, c_def, True)
         if res is not None:
-            internodes[t_off, t_def] = res
-            return res
-
+            return res, None
         if t_off:
-            cards = matching_by_value(c_off, values_of(chain(t_off, t_def)))
+            suitable = matching_by_value(c_off, values_of(t_off | t_def))
         else:
-            cards = c_off
-        moves = {
-            c: defensive(c_off - {c}, c_def, t_off | {c}, t_def, c)
-            for c in cards
-        }
+            suitable = c_off
+
+        variants = [(rival_defends(c_off - {c}, c_def, t_off | {c}, t_def, c)[0], c)
+                    for c in suitable]
         if t_off:
-            moves[None] = make_subnode(t_off, t_def)
-        node = make_internode(moves, iattack)
-        internodes[t_off, t_def] = node
-        return node
+            variants.append((nextlevel(c_def, c_off, False)[0], None))
+        return max(variants, key=itemgetter(0))
 
-    def defensive(c_off, c_def, t_off, t_def, beatcard):
-        assert beatcard in t_off
-        assert beatcard not in c_off
-
-        if (t_off, t_def) in internodes:
-            return internodes[t_off, t_def]
-
-        variants = frozenset(c for c in c_def if beats(c, beatcard))
-        moves = {
-            c: offensive(c_off, c_def - {c}, t_off, t_def | {c})
-            for c in variants
-        }
-        moves[None] = put_unbeatables(c_off, c_def, t_off, t_def)
-        node = make_internode(moves, not iattack)
-        internodes[t_off, t_def] = node
-        return node
-
-    def put_unbeatables(c_off, c_def, t_off, t_def):
+    @cache_results_in(outcomes)
+    def rival_defends(c_off, c_def, t_off, t_def, offcard):
+        assert offcard in t_off
+        assert offcard not in c_off
         assert len(t_off) == len(t_def) + 1
-        assert len(c_def) >= 1
+        assert c_def
 
-        if (t_off, t_def) in internodes:
-            return internodes[t_off, t_def]
+        suitable = tuple(c for c in c_def if beats(c, offcard))
+        if not suitable:
+            return i_put_unbeatables(c_off, c_def, t_off, t_def)
 
-        more_cards = matching_by_value(c_off, values_of(chain(t_off, t_def)))
-        n = min(len(c_def) - 1, len(more_cards))
-        moves = {
-            frozenset(cards): make_subnode(t_off.union(cards), t_def)
-            for nn in range(n+1)
-            for cards in combinations(more_cards, nn)
-        }
-        node = make_internode(moves, iattack)
-        internodes[t_off, t_def] = node
-        return node
+        defcard = min(suitable, key=card_value)
+        return i_attack(c_off, c_def - {defcard}, t_off, t_def | {defcard})
 
-    def make_subnode(t_off, t_def):
-        assert len(t_off) >= len(t_def)
-        if len(t_off) > len(t_def):
-            return build_decision_tree(
-                offense_cards - t_off,
-                defense_cards | t_off,
-                iattack,
-                levels - 1
+    @cache_results_in(outcomes)
+    def i_put_unbeatables(c_off, c_def, t_off, t_def):
+        suitable = matching_by_value(c_off, values_of(t_off | t_def))
+        variants = [
+            (
+                nextlevel(c_off.difference(unb), c_def.union(t_off, t_def, unb), True)[0],
+                frozenset(unb)
             )
+            for n in range(min(len(suitable), len(c_def) - 1) + 1)
+            for unb in combinations(suitable, n)
+        ]
+        return max(variants, key=itemgetter(0))
+
+    @cache_results_in(outcomes)
+    def rival_attacks(c_off, c_def, t_off, t_def):
+        res = check_eog(c_off, c_def, False)
+        if res is not None:
+            return res, None
+        if not t_off:
+            offcard = min(c_off, key=card_value)
         else:
-            return build_decision_tree(
-                defense_cards - t_def,
-                offense_cards - t_off,
-                not iattack,
-                levels - 1
-            )
+            suitable = matching_by_value(c_off, values_of(t_off | t_def))
+            offcard = min(suitable, key=card_value) if suitable else None
 
-    return offensive(offense_cards, defense_cards, frozenset(), frozenset())
+        if offcard is None:
+            return nextlevel(c_def, c_off, True)
+        else:
+            return i_defend(c_off - {offcard}, c_def, t_off | {offcard}, t_def, offcard)
+
+    @cache_results_in(outcomes)
+    def i_defend(c_off, c_def, t_off, t_def, offcard):
+        assert offcard in t_off
+        assert offcard not in c_off
+        assert len(t_off) == len(t_def) + 1
+        assert c_def
+
+        suitable = tuple(c for c in c_def if beats(c, offcard))
+        variants = [
+            (rival_attacks(c_off, c_def - {c}, t_off, t_def | {c})[0], c)
+            for c in suitable
+        ]
+        variants.append((rival_puts_unbeatables(c_off, c_def, t_off, t_def)[0], None))
+        return max(variants, key=itemgetter(0))
+
+    @cache_results_in(outcomes)
+    def rival_puts_unbeatables(c_off, c_def, t_off, t_def):
+        unb = unbeatables(c_off, values_of(t_off | t_def), len(c_def) - 1)
+        return nextlevel(c_off - unb, c_def | t_off | t_def | unb, False)
+
+    if fn == 'i_attack':
+        return i_attack
+    elif fn == 'i_defend':
+        return i_defend
+    elif fn == 'i_put_unbeatables':
+        return i_put_unbeatables
+    elif fn == 'rival_attacks':
+        return rival_attacks
 
 
-MAXDEPTH = 3
+def make_offense_decision(levels, c_off, c_def, iattack):
+    """Special case of `make_decision': simplified use"""
+    if levels == 0:
+        # Estimate my cards vs rival's cards
+        p1, p2 = cardset_relation(c_off, c_def)
+        return p1 if iattack else p2, None
 
-
-def build_tree(mycards, hiscards, iput):
-    """Build decision tree which starts with offensive.
-    :param mycards: iterable of cards
-    :param hiscards: iterable of cards
-    :param boolean iput:
-    """
-    if iput:
-        offense_cards = frozenset(mycards)
-        defense_cards = frozenset(hiscards)
+    if iattack:
+        fn = make_decision(levels, 'i_attack')
     else:
-        offense_cards = frozenset(hiscards)
-        defense_cards = frozenset(mycards)
+        fn = make_decision(levels, 'rival_attacks')
 
-    return build_decision_tree(offense_cards, defense_cards, iput, MAXDEPTH)
+    return fn(c_off, c_def, frozenset(), frozenset())
 
 
 def cardset_relation(cards1, cards2):
@@ -212,13 +158,13 @@ def cardset_relation(cards1, cards2):
             ((card_value(c), 1) for c in cards1),
             ((card_value(c), 2) for c in cards2)
         ),
-        key=operator.itemgetter(0),
+        key=itemgetter(0),
         reverse=True
     )
     met1, met2 = 0, 0
     p1, p2 = 0, 0
-    for key, cardgroup in groupby(cards, operator.itemgetter(0)):
-        values = tuple(map(operator.itemgetter(1), cardgroup))
+    for key, cardgroup in groupby(cards, itemgetter(0)):
+        values = tuple(map(itemgetter(1), cardgroup))
         justmet1 = sum(1 for v in values if v == 1)
         justmet2 = sum(1 for v in values if v == 2)
         p1 += met1 * justmet2
@@ -230,39 +176,3 @@ def cardset_relation(cards1, cards2):
         return 0.5, 0.5
     else:
         return p1 / (p1 + p2), p2 / (p1 + p2)
-
-
-def tree_count(node):
-    if isinstance(node, Node):
-        return tree_count(node.internode)
-    if isinstance(node, Internode):
-        return 1 + sum(tree_count(x) for x in node.moves.values())
-    return 1
-
-
-def deepen(node, lvl=0):
-    def deepen_internode(intnd, lvl):
-        #print('deepen', lvl)
-        assert isinstance(intnd, Internode)
-        for sub in intnd.moves.values():
-            if isinstance(sub, Internode):
-                deepen_internode(sub, lvl+1)
-            elif isinstance(sub, Node):
-                deepen(sub, lvl+1)
-            else:
-                assert isinstance(sub, float)
-
-        bestmove, est = internode_estimate(intnd.moves, intnd.myturn)
-        intnd.bestmove = bestmove
-        intnd.estimate = est
-
-    assert isinstance(node, Node)
-    if is_leaf_node(node):
-        node.internode = principal_internode(
-            node.offense_cards,
-            node.defense_cards,
-            node.iattack,
-            1
-        )
-    else:
-        deepen_internode(node.internode, lvl+1)

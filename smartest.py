@@ -1,5 +1,5 @@
 from common import RequestCode as rc
-from decision_tree import build_decision_tree, Internode, deepen, tree_count
+from decision_tree import make_decision
 from smart import scenario as smart_scenario
 
 
@@ -10,60 +10,70 @@ def scenario(send, cards, iattack):
 MAX_LEVELS = 3
 
 
-def decision_scenario(send, coff, cdef, iattack):
-    def offense(intnd):
-        """Return next Node"""
-        #print("i offense")
-        while isinstance(intnd, Internode):
-            offcard = intnd.bestmove
+def decision_scenario(send, mycards, hiscards, iattack):
+    def offense():
+        """Conduct our offense. Params are mutable sets"""
+        toff, tdef = set(), set()
+        while mycards and hiscards:
+            fn = make_decision(MAX_LEVELS, 'i_attack')
+            est, offcard = fn(
+                frozenset(mycards),
+                frozenset(hiscards),
+                frozenset(toff),
+                frozenset(tdef)
+            )
             send(offcard)
-            #print("offcard", offcard)
-            if offcard is None or isinstance(offcard, frozenset):
-                return intnd.moves[offcard]
+            if offcard is None:
+                return False
+            mycards.remove(offcard)
+            toff.add(offcard)
+
             defcard = yield rc.DEFCARD
-            #print("defcard", defcard)
-            intnd = intnd.moves[offcard].moves[defcard]
-        return intnd
-
-    def defense(intnd):
-        """Return next Node"""
-        #print("i defense")
-        while isinstance(intnd, Internode):
-            offcard = yield rc.OFFCARD
-            #print("offcard", offcard)
-            if offcard is None or isinstance(offcard, frozenset):
-                return intnd.moves[offcard]
-            defcard = intnd.moves[offcard].bestmove
-            send(defcard)
-            #print("defcard", defcard)
-            intnd = intnd.moves[offcard].moves[defcard]
             if defcard is None:
-                return intnd.moves[(yield rc.UNBEATABLES)]
-        return intnd
+                fn = make_decision(MAX_LEVELS, 'i_put_unbeatables')
+                est, unb = fn(
+                    frozenset(mycards),
+                    frozenset(hiscards),
+                    frozenset(toff),
+                    frozenset(tdef)
+                )
+                send(unb)
+                mycards.difference_update(unb)
+                hiscards.update(unb, toff, tdef)
+                return True
+            hiscards.remove(defcard)
+            tdef.add(defcard)
 
-    print("Building tree..")
-    root = build_decision_tree(coff, cdef, iattack, MAX_LEVELS)
-    print("Done, count is", tree_count(root))
+    def defense():
+        """Conduct our defense. Params are mutable sets"""
+        toff, tdef = set(), set()
+        while mycards and hiscards:
+            offcard = yield rc.OFFCARD
+            if offcard is None:
+                return True
+            hiscards.remove(offcard)
+            toff.add(offcard)
 
-    while True:
-        #print("off", root.offense_cards, "against", root.defense_cards)
-        if root.iattack:
-            next_node = (yield from offense(root.internode))
-        else:
-            next_node = (yield from defense(root.internode))
+            fn = make_decision(MAX_LEVELS, 'i_defend')
+            est, defcard = fn(
+                frozenset(hiscards),
+                frozenset(mycards),
+                frozenset(toff),
+                frozenset(tdef),
+                offcard
+            )
+            send(defcard)
+            if defcard is None:
+                unb = yield rc.UNBEATABLES
+                hiscards.difference_update(unb)
+                mycards.update(unb, toff, tdef)
+                return False
+
+            mycards.remove(defcard)
+            tdef.add(defcard)
+
+    while mycards and hiscards:
+        iattack = (yield from offense()) if iattack else (yield from defense())
 
         yield rc.REPLENISHMENT
         yield rc.NUM_RIVAL_REPLENISHMENT
-
-        if isinstance(next_node, float):
-            print("next_node is ", next_node, "quitting")
-            break
-
-        root = next_node
-        tc = tree_count(root)
-        if tc < 5000:
-            print("Count is", tc, "deepening..")
-            deepen(root)
-            print("Done, count is", tree_count(root))
-        else:
-            print("Count is", tc, "decided not to deepen")

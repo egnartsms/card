@@ -71,6 +71,13 @@ def matching_by_value(cards, cardvalues, exclude_trumps=False):
     return frozenset(filter(cond, cards))
 
 
+def unbeatables(cards, cardvalues, maxn):
+    """Return frozenset of suitable unbeatables"""
+    suitable = sorted(matching_by_value(cards, cardvalues), key=card_value)
+    del suitable[min(maxn, len(suitable)):]
+    return frozenset(suitable)
+
+
 def mean_cardvalue(cards):
     return mean(map(card_value, cards))
 
