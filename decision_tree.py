@@ -1,29 +1,30 @@
 import operator
 from itertools import combinations, chain, groupby
 
+from recordclass import recordclass
+
 from common import beats, matching_by_value, values_of, card_value
-from util import recordtype
 
 
-MAXDEPTH = 3
-
-
-Node = recordtype('Node', (
+Node = recordclass('Node', (
     'offense_cards',
     'defense_cards',
-    'myturn',
+    'iattack',
+    # HACK: for leaf nodes, we store estimate here, not internode.  When deepen,
+    # this field is assigned a real internode.
     'internode',
-    'internode_count',
-    'subnodes'
 ))
 
-
-Internode = recordtype('Internode', (
+Internode = recordclass('Internode', (
     'moves',
     'myturn',
-    ('estimate', None),
-    ('bestmove', None),
+    'estimate',
+    'bestmove',
 ))
+
+
+def is_leaf_node(node):
+    return isinstance(node.internode, float)
 
 
 def node_estimate(obj):
@@ -38,10 +39,7 @@ def node_estimate(obj):
 
 def make_internode(moves, myturn):
     """Make a new internode and compute its estimate and best move"""
-    subestimates = tuple((move, node_estimate(subnode))
-                         for move, subnode in moves.items())
-    bestmove, est = (max if myturn else min)(subestimates, key=operator.itemgetter(1))
-
+    bestmove, est = internode_estimate(moves, myturn)
     return Internode(
         moves=moves,
         myturn=myturn,
@@ -50,25 +48,58 @@ def make_internode(moves, myturn):
     )
 
 
-def build_decision_tree(offense_cards, defense_cards, myturn, levels):
-    def check_eog(c_off, c_def):
-        if c_off and c_def:
-            return None
-        elif not c_off and not c_def:
-            # A draw
-            return 0.5
-        elif not c_off:
-            return 1.0 if myturn else 0.0
-        else:
-            assert not c_def
-            return 0.0 if myturn else 1.0
+def internode_estimate(moves, myturn):
+    """Compute internode's estimate based on its children's estimates.
 
+    So for this to work, the children's estimates must already have been computed.
+    :return: (bestmove, estimate)
+    """
+    subestimates = tuple((move, node_estimate(subnode))
+                         for move, subnode in moves.items())
+    return (max if myturn else min)(subestimates, key=operator.itemgetter(1))
+
+
+def check_eog(c_off, c_def, iattack):
+    if c_off and c_def:
+        return None
+    elif not c_off and not c_def:
+        # A draw
+        return 0.5
+    elif not c_off:
+        return 1.0 if iattack else 0.0
+    else:
+        assert not c_def
+        return 0.0 if iattack else 1.0
+
+
+def build_decision_tree(offense_cards, defense_cards, iattack, levels):
+    res = check_eog(offense_cards, defense_cards, iattack)
+    if res is not None:
+        return res
+
+    if levels == 0:
+        # Estimate my cards vs rival's cards
+        p1, p2 = cardset_relation(offense_cards, defense_cards)
+        return Node(
+            offense_cards=offense_cards,
+            defense_cards=defense_cards,
+            iattack=iattack,
+            internode=p1 if iattack else p2
+        )
+
+    return Node(
+        offense_cards=offense_cards,
+        defense_cards=defense_cards,
+        iattack=iattack,
+        internode=principal_internode(offense_cards, defense_cards, iattack, levels)
+    )
+
+
+def principal_internode(offense_cards, defense_cards, iattack, levels):
     # Terminology:
     #   c_off, c_def - cards of offensive and defensive players that
     # they have on the hands;
     #   t_off, t_def - cards on the table (already put).
-    # Next strike nodes: {(t_off, t_def): Node}
-    subnodes = {}
     # Nodes within this strike: {(t_off, t_def): Internode}
     internodes = {}
 
@@ -76,7 +107,7 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
         if (t_off, t_def) in internodes:
             return internodes[t_off, t_def]
 
-        res = check_eog(c_off, c_def)
+        res = check_eog(c_off, c_def, iattack)
         if res is not None:
             internodes[t_off, t_def] = res
             return res
@@ -90,8 +121,8 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
             for c in cards
         }
         if t_off:
-            moves[None] = lookup_subnode(t_off, t_def)
-        node = make_internode(moves, myturn)
+            moves[None] = make_subnode(t_off, t_def)
+        node = make_internode(moves, iattack)
         internodes[t_off, t_def] = node
         return node
 
@@ -108,7 +139,7 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
             for c in variants
         }
         moves[None] = put_unbeatables(c_off, c_def, t_off, t_def)
-        node = make_internode(moves, not myturn)
+        node = make_internode(moves, not iattack)
         internodes[t_off, t_def] = node
         return node
 
@@ -119,55 +150,38 @@ def build_decision_tree(offense_cards, defense_cards, myturn, levels):
         if (t_off, t_def) in internodes:
             return internodes[t_off, t_def]
 
-        more_cards = matching_by_value(c_off, chain(t_off, t_def))
+        more_cards = matching_by_value(c_off, values_of(chain(t_off, t_def)))
         n = min(len(c_def) - 1, len(more_cards))
         moves = {
-            frozenset(cards): lookup_subnode(t_off.union(cards), t_def)
-            for cards in combinations(more_cards, n)
+            frozenset(cards): make_subnode(t_off.union(cards), t_def)
+            for nn in range(n+1)
+            for cards in combinations(more_cards, nn)
         }
-        node = make_internode(moves, myturn)
+        node = make_internode(moves, iattack)
         internodes[t_off, t_def] = node
         return node
 
-    def lookup_subnode(t_off, t_def):
+    def make_subnode(t_off, t_def):
         assert len(t_off) >= len(t_def)
-        if (t_off, t_def) not in subnodes:
-            subnodes[t_off, t_def] = (
-                build_decision_tree(
-                    offense_cards - t_off,
-                    defense_cards | t_off,
-                    myturn,
-                    levels - 1
-                ) if len(t_off) > len(t_def) else
-                build_decision_tree(
-                    defense_cards - t_def,
-                    offense_cards - t_off,
-                    not myturn,
-                    levels - 1
-                )
+        if len(t_off) > len(t_def):
+            return build_decision_tree(
+                offense_cards - t_off,
+                defense_cards | t_off,
+                iattack,
+                levels - 1
             )
-        return subnodes[t_off, t_def]
+        else:
+            return build_decision_tree(
+                defense_cards - t_def,
+                offense_cards - t_off,
+                not iattack,
+                levels - 1
+            )
 
-    res = check_eog(offense_cards, defense_cards)
-    if res is not None:
-        return res
+    return offensive(offense_cards, defense_cards, frozenset(), frozenset())
 
-    if levels == 0:
-        # Estimate my cards vs rival's cards
-        p1, p2 = cardset_relation(offense_cards, defense_cards)
-        return p1 if myturn else p2
 
-    principal_internode = offensive(offense_cards, defense_cards,
-                                    frozenset(), frozenset())
-
-    return Node(
-        offense_cards=offense_cards,
-        defense_cards=defense_cards,
-        myturn=myturn,
-        internode=principal_internode,
-        internode_count=len(internodes),
-        subnodes=tuple(subnodes.values()),
-    )
+MAXDEPTH = 3
 
 
 def build_tree(mycards, hiscards, iput):
@@ -218,68 +232,37 @@ def cardset_relation(cards1, cards2):
         return p1 / (p1 + p2), p2 / (p1 + p2)
 
 
-def vis_tree_structure(tree):
-    if not isinstance(tree, Node):
-        return tree
-
-    return {c: vis_tree_structure(sub) for c, sub in tree.moves.items()}
-
-
-# def deepen1(node):
-#     """Enlarge the tree by 1 more level downwards and update estimates.
-#
-#     :param node: Node
-#     """
-#     if not isinstance(node, Node):
-#         return
-#
-#     for subnode in node.moves.values():
-#         deepen1(subnode)
-#
-#     # Select those moves that lead to jump to the next level where we still have
-#     # Nones instead of nodes.  These are leaves that we want to grow our tree
-#     # at.  In a defense node there can be no such leaves (cause a strike cannot
-#     # finish after beating or giving up -- the offensive player should be able
-#     # to put more cards after that).
-#     if node.beatcard:
-#         _recompute_estimate_for(node)
-#         return
-#
-#     xmoves = frozenset(
-#         move for move, subnode in node.moves.items() if subnode is None
-#     )
-#     # The following is due to the game scheme
-#     assert all(m is None or isinstance(m, frozenset) for m in xmoves)
-#
-#     for cards in xmoves:
-#         node.moves[cards] = (
-#             build_offense_subtree(
-#                 node.offense_cards - cards,
-#                 node.defense_cards | cards | node.strike.all_cards,
-#                 node.myturn,
-#                 Strike(),
-#                 0, 1
-#             )
-#             if isinstance(cards, frozenset) else
-#             build_offense_subtree(
-#                 node.defense_cards,
-#                 node.offense_cards,
-#                 not node.myturn,
-#                 Strike(),
-#                 0, 1
-#             )
-#         )
-#         estimate(node.moves[cards])
-#
-#     _recompute_estimate_for(node)
-
-
-def tree_height(node):
-    raise NotImplementedError
-
-
 def tree_count(node):
     if isinstance(node, Node):
-        return 1 + node.internode_count + sum(tree_count(x) for x in node.subnodes)
+        return tree_count(node.internode)
+    if isinstance(node, Internode):
+        return 1 + sum(tree_count(x) for x in node.moves.values())
+    return 1
+
+
+def deepen(node, lvl=0):
+    def deepen_internode(intnd, lvl):
+        #print('deepen', lvl)
+        assert isinstance(intnd, Internode)
+        for sub in intnd.moves.values():
+            if isinstance(sub, Internode):
+                deepen_internode(sub, lvl+1)
+            elif isinstance(sub, Node):
+                deepen(sub, lvl+1)
+            else:
+                assert isinstance(sub, float)
+
+        bestmove, est = internode_estimate(intnd.moves, intnd.myturn)
+        intnd.bestmove = bestmove
+        intnd.estimate = est
+
+    assert isinstance(node, Node)
+    if is_leaf_node(node):
+        node.internode = principal_internode(
+            node.offense_cards,
+            node.defense_cards,
+            node.iattack,
+            1
+        )
     else:
-        return 1
+        deepen_internode(node.internode, lvl+1)

@@ -140,12 +140,12 @@ class RequestCode(metaclass=CodesMetaclass):
 class Player:
     __slots__ = 'value', 'request_code', 'gen'
 
-    def __init__(self, genfunc, mycards, myturn):
+    def __init__(self, genfunc, mycards, iattack):
         def value_sender(val):
             self.value = val
 
         self.value = self.request_code = novalue
-        self.gen = genfunc(value_sender, mycards, myturn)
+        self.gen = genfunc(value_sender, mycards, iattack)
         self.send(None)
 
     def send(self, value, request_code_must_be=None):

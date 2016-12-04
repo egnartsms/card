@@ -1,10 +1,10 @@
-from itertools import chain, takewhile
+from itertools import takewhile
 
 from common import card_value, beats, matching_by_value, RequestCode as rc,\
     NCARDS_PLAYER, deckset, values_of, mean_cardvalue
 
 
-def scenario(send, cards, myturn):
+def scenario(send, cards, iattack, when_open_game=None):
     cards = set(cards)
     rival_num_unknowns = NCARDS_PLAYER
     blackset = set(deckset) - cards
@@ -26,12 +26,13 @@ def scenario(send, cards, myturn):
 
     def offense():
         nonlocal rival_num_unknowns, rival_knowns, cards
+
         toff, tdef = set(), set()
         while not is_eog():
             if not toff:
                 offcard = draw_from(cards)
             else:
-                suitable = matching_by_value(cards, values_of(chain(toff, tdef)))
+                suitable = matching_by_value(cards, values_of(toff | tdef))
                 if not blackset:
                     offcard = draw_from(suitable)
                 elif not suitable:
@@ -51,15 +52,8 @@ def scenario(send, cards, myturn):
             toff.add(offcard)
 
             defcard = yield rc.DEFCARD
-            if defcard is not None:
-                tdef.add(defcard)
-                if defcard in rival_knowns:
-                    rival_knowns.remove(defcard)
-                else:
-                    blackset.remove(defcard)
-                    rival_num_unknowns -= 1
-            else:
-                unbeatables = choose_unbeatables(rival_num() - 1, chain(toff, tdef))
+            if defcard is None:
+                unbeatables = choose_unbeatables(rival_num() - 1, values_of(toff | tdef))
                 assert not unbeatables & rival_knowns
                 cards -= unbeatables
                 toff |= unbeatables
@@ -67,11 +61,17 @@ def scenario(send, cards, myturn):
                 send(unbeatables)
                 return True
 
+            tdef.add(defcard)
+            if defcard in rival_knowns:
+                rival_knowns.remove(defcard)
+            else:
+                blackset.remove(defcard)
+                rival_num_unknowns -= 1
+
         return False
 
     def choose_unbeatables(n, cardvalues):
-        unbeatables = sorted(matching_by_value(cards, cardvalues),
-                             key=card_value)
+        unbeatables = sorted(matching_by_value(cards, cardvalues), key=card_value)
         del unbeatables[min(n, len(unbeatables)):]
 
         if not blackset:
@@ -106,7 +106,7 @@ def scenario(send, cards, myturn):
                 defcard = min(suitable, key=card_value)
                 if blackset:
                     # Here we can decide to give up
-                    Mgiveup = mean_cardvalue(chain(toff, tdef, cards))
+                    Mgiveup = mean_cardvalue(toff | tdef | cards)
                     n_old = len(cards) - 1
                     n_new = max(0, NCARDS_PLAYER - n_old)
                     Mb = mean_cardvalue(blackset)
@@ -134,16 +134,23 @@ def scenario(send, cards, myturn):
         return len(toff) == len(tdef)
 
     while not is_eog():
-        myturn = (yield from offense()) if myturn else (yield from defense())
+        iattack = (yield from offense()) if iattack else (yield from defense())
         my_replenishment = yield rc.REPLENISHMENT
         assert not my_replenishment & rival_knowns
         blackset -= my_replenishment
         cards |= my_replenishment
         rival_num_unknowns += yield rc.NUM_RIVAL_REPLENISHMENT
-        if rival_num_unknowns == len(blackset):
+        if blackset and rival_num_unknowns == len(blackset):
             rival_num_unknowns = 0
             assert not rival_knowns & blackset
             rival_knowns |= blackset
             blackset.clear()
+            # From this moment on, it is possible to give control to another algorithm
+            if when_open_game:
+                if iattack:
+                    yield from when_open_game(send, cards, rival_knowns, True)
+                else:
+                    yield from when_open_game(send, rival_knowns, cards, False)
+                break
 
     yield rc.GAME_OVER

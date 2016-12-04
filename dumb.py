@@ -7,12 +7,10 @@ The dumb player's strategy is like this:
     * put or not to put trump cards (varies).
 """
 
-from itertools import chain
-
 from common import card_value, beats, matching_by_value, RequestCode as rc, values_of
 
 
-def scenario(send, cards, myturn):
+def scenario(send, cards, iattack):
     # Remember: we are not responsible to track EOG conditions here. This
     # is for the code that manages the game to handle.
     cards = set(cards)
@@ -28,14 +26,14 @@ def scenario(send, cards, myturn):
         return card
 
     def offense():
-        """Return True if we made the rival give up"""
+        """Return True if it we offense after that (== the rival did not survive)"""
         nonlocal nrival_cards
 
         toff, tdef = set(), set()
         while nrival_cards > 0 and cards:
             if toff:
                 offcard = choose_from(
-                    matching_by_value(cards, values_of(chain(toff, tdef)))
+                    matching_by_value(cards, values_of(toff | tdef))
                 )
             else:
                 offcard = choose_from(cards)
@@ -50,8 +48,7 @@ def scenario(send, cards, myturn):
                 tdef.add(defcard)
                 nrival_cards -= 1
             else:
-                unbeatables = choose_unbeatables(nrival_cards - 1,
-                                                 values_of(chain(toff, tdef)))
+                unbeatables = choose_unbeatables(nrival_cards - 1, values_of(toff | tdef))
                 cards.difference_update(unbeatables)
                 nrival_cards += len(unbeatables) + len(toff) + len(tdef)
                 send(unbeatables)
@@ -60,13 +57,12 @@ def scenario(send, cards, myturn):
         return False
 
     def choose_unbeatables(n, cardvalues):
-        unbeatables = sorted(matching_by_value(cards, cardvalues, exclude_trumps=True),
-                             key=card_value)
+        unbeatables = sorted(matching_by_value(cards, cardvalues), key=card_value)
         del unbeatables[min(n, len(unbeatables)):]
         return frozenset(unbeatables)
 
     def defense():
-        """Return True if we survived"""
+        """Return True if it we offense after that (== we survived this strike)"""
         nonlocal nrival_cards
 
         toff, tdef = set(), set()
@@ -96,7 +92,7 @@ def scenario(send, cards, myturn):
         return len(toff) == len(tdef)
 
     while cards and nrival_cards > 0:
-        myturn = (yield from offense()) if myturn else (yield from defense())
+        iattack = (yield from offense()) if iattack else (yield from defense())
         cards.update((yield rc.REPLENISHMENT))
         nrival_cards += yield rc.NUM_RIVAL_REPLENISHMENT
 
