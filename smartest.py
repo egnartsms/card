@@ -7,7 +7,7 @@ def scenario(send, cards, iattack):
     return smart_scenario(send, cards, iattack, decision_scenario)
 
 
-MAX_LEVELS = 3
+MAX_LEVELS = 2
 
 
 def decision_scenario(send, mycards, hiscards, iattack):

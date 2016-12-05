@@ -6,7 +6,6 @@ import gcxt
 from dumb import scenario as dumb_scenario
 from smart import scenario as smart_scenario
 from smartest import scenario as smartest_scenario
-from common import random_deck, NCARDS_PLAYER
 from game import rungame
 
 
@@ -32,7 +31,7 @@ def launch_n_tasks(N, doprint=False):
     res = []
     for i in range(N):
         res.append(launch_1_game())
-        if doprint and i % 1000 == 0:
+        if doprint:
             print(i, "processed")
     return res
 
@@ -55,7 +54,7 @@ def launch_in_1_process(N):
 def launch_1_game():
     return rungame(
         smartest_scenario,
-        dumb_scenario,
+        smartest_scenario,
     )
 
 
